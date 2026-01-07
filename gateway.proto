@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package ham.gateway.v1;
+
+option go_package = "github.com/whu-ham/ham-gateway/gen/ham/gateway/v1;gatewayv1";
+
+import "proto/score.proto";
+import "proto/course.proto";
+
+service GatewayService {
+  rpc SearchCourse(SearchCourseRequest) returns (SearchCourseResponse) {}
+  rpc GetCourseStat(GetCourseStatRequest) returns (GetCourseStatResponse) {}
+}
+
+message SearchCourseRequest {
+  string keyword = 1;
+  string keyword_type = 2;
+}
+
+message SearchCourseResponse {
+  string code = 1;
+  string message = 2;
+  repeated CourseItem data = 3;
+}
+
+message GetCourseStatRequest {
+  string course_name = 1;
+  string instructor = 2;
+}
+
+message GetCourseStatResponse {
+  string code = 1;
+  string message = 2;
+  CourseStat data = 3;
+}
+
+message CourseItem {
+  string name = 1;
+  string instructor = 2;
+  string type = 3;
+  string score = 4;
+}
+
+message CourseStat {
+  string name = 1;
+  string instructor = 2;
+  double average = 3;
+  int32 total = 4;
+  repeated ScoreRange range = 5;
+}
+
+message ScoreRange {
+  int32 from = 1;
+  int32 to = 2;
+  int32 total = 3;
+  string color = 4;
+}
