@@ -1,0 +1,84 @@
+name: Docker Build
+
+on:
+  release:
+    types: [published, prereleased]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        type: choice
+        options:
+          - release
+          - prerelease
+        default: 'release'
+      tag_name:
+        description: 'Tag name for the release'
+        type: string
+        required: true
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.prepare.outputs.tag_name }}
+      is_prerelease: ${{ steps.prepare.outputs.is_prerelease }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare release info
+        id: prepare
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag_name=${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+            if [ "${{ inputs.release_type }}" = "prerelease" ]; then
+              echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            else
+              echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "tag_name=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+            echo "is_prerelease=${{ github.event.release.prerelease }}" >> $GITHUB_OUTPUT
+          fi
+
+  build-docker:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/whu-sb/ham-gateway:${{ needs.prepare-release.outputs.tag_name }}
+            ghcr.io/whu-sb/ham-gateway:${{ needs.prepare-release.outputs.is_prerelease == 'true' && 'dev' || 'latest' }}
+            ghcr.io/whu-sb/ham-gateway:${{ needs.prepare-release.outputs.is_prerelease == 'true' && 'unstable' || 'stable' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
