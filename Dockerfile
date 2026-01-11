@@ -4,25 +4,21 @@ FROM golang:1.24-alpine AS builder
 WORKDIR /app
 
 # Install protoc and dependencies
-RUN apk add --no-cache protobuf git curl
-
-# Install buf CLI for protobuf generation
-RUN curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-Linux-x86_64" -o /usr/local/bin/buf && \
-    chmod +x /usr/local/bin/buf
+RUN apk add --no-cache protobuf git
 
 # Copy go.mod and go.sum
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Install protoc-gen-go and protoc-gen-connect-go
+# Install protoc-gen-go and protoc-gen-go-grpc
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install github.com/bufbuild/connect-go/cmd/protoc-gen-connect-go@latest
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 # Copy source code
 COPY . .
 
-# Generate protobuf code
-RUN buf generate
+# Create gen directory and generate protobuf code using go generate
+RUN mkdir -p gen && go generate ./...
 
 # Build the application
 RUN go build -o /app/gateway cmd/gateway/main.go

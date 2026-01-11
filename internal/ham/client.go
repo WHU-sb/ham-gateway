@@ -1,70 +1,102 @@
 package ham
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+
+	pb "github.com/whu-ham/ham-gateway/gen/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 )
 
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	appID      string
-	appSecret  string
+	conn         *grpc.ClientConn
+	scoreClient  pb.GetCourseScoreServiceClient
+	searchClient pb.SearchCourseServiceClient
+	appID        string
+	appSecret    string
 }
 
 func NewClient(baseURL, appID, appSecret, certPath, keyPath string) (*Client, error) {
+	// Load client certificate and key for mTLS
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("loaded x509 key pair failed: %w", err)
+		return nil, fmt.Errorf("failed to load x509 key pair: %w", err)
+	}
+
+	// Create TLS credentials
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+	creds := credentials.NewTLS(tlsConfig)
+
+	// Create gRPC connection with mTLS
+	conn, err := grpc.NewClient(
+		baseURL,
+		grpc.WithTransportCredentials(creds),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
 	}
 
 	return &Client{
-		httpClient: &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					Certificates: []tls.Certificate{cert},
-				},
-			},
-		},
-		baseURL:   baseURL,
-		appID:     appID,
-		appSecret: appSecret,
+		conn:         conn,
+		scoreClient:  pb.NewGetCourseScoreServiceClient(conn),
+		searchClient: pb.NewSearchCourseServiceClient(conn),
+		appID:        appID,
+		appSecret:    appSecret,
 	}, nil
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body interface{}, target interface{}) error {
-	var bodyReader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		bodyReader = bytes.NewReader(data)
+// Close closes the gRPC connection
+func (c *Client) Close() error {
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
+}
+
+// addAuth adds authentication headers to the context
+func (c *Client) addAuth(ctx context.Context) context.Context {
+	md := metadata.New(map[string]string{
+		"x-app-id":     c.appID,
+		"x-app-secret": c.appSecret,
+	})
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
+// SearchCourse calls HAM API to search for courses
+func (c *Client) SearchCourse(ctx context.Context, keyword string, keywordType int32) (*pb.SearchCourseResponse, error) {
+	ctx = c.addAuth(ctx)
+
+	req := &pb.SearchCourseRequest{
+		Keyword:     keyword,
+		KeywordType: pb.SearchCourseKeywordType(keywordType),
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+	resp, err := c.searchClient.SearchCourse(ctx, req)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("search course failed: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-App-ID", c.appID)
-	req.Header.Set("X-App-Secret", c.appSecret)
+	return resp, nil
+}
 
-	resp, err := c.httpClient.Do(req)
+// GetCourseScoreItem calls HAM API to get course score statistics
+func (c *Client) GetCourseScoreItem(ctx context.Context, courseName, instructor string) (*pb.GetCourseScoreItemResponse, error) {
+	ctx = c.addAuth(ctx)
+
+	req := &pb.GetCourseScoreItemRequest{
+		CourseName: &courseName,
+		Instructor: &instructor,
+	}
+
+	resp, err := c.scoreClient.GetCourseScoreItem(ctx, req)
 	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("upstream returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("get course score item failed: %w", err)
 	}
 
-	return json.NewDecoder(resp.Body).Decode(target)
+	return resp, nil
 }
